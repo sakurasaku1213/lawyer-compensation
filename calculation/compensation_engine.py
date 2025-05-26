@@ -109,7 +109,25 @@ class CompensationCalculationEngine:
             "50代": 4300000,
             "60代": 3800000
         }
-    
+
+    def get_leibniz_coefficient(self, period: int) -> Optional[Decimal]:
+        """指定された期間のライプニッツ係数を取得します。"""
+        if period <= 0:
+            return Decimal('0')
+        if period in self.leibniz_coefficients:
+            return Decimal(str(self.leibniz_coefficients[period]))
+        else:
+            # 辞書にない場合は近似計算 (3%の利率を想定)
+            # (1 - (1 + 利率)^(-期間)) / 利率
+            try:
+                rate = Decimal('0.03')
+                leibniz = (Decimal('1') - (Decimal('1') + rate) ** -period) / rate
+                # 小数点以下3桁で四捨五入（一般的なライプニッツ係数の表示に合わせる）
+                return leibniz.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)
+            except Exception as e:
+                self.logger.error(f"ライプニッツ係数の近似計算エラー (期間: {period}): {e}")
+                return None
+
     def calculate_hospitalization_compensation(self, medical_info: MedicalInfo) -> CalculationResult:
         """入通院慰謝料の計算"""
         try:
@@ -269,8 +287,15 @@ class CompensationCalculationEngine:
             if person_info.occupation == "家事従事者":
                 base_income = Decimal(str(self.housework_annual_income["全年齢平均"]))
             else:
+                # UI・モデル・エンジン間で basic_annual_income に統一
                 base_income = income_info.basic_annual_income or person_info.annual_income
             
+基礎収入: {base_income:,}円/年
+労働能力喪失率: {float(loss_rate)*100:.0f}%（第{grade}級）
+労働能力喪失期間: {loss_period}年
+ライプニッツ係数: {leibniz}
+計算式: {base_income:,}円 × {float(loss_rate)*100:.0f}% × {leibniz}
+"""
             # 労働能力喪失率
             grade = medical_info.disability_grade
             if grade not in self.disability_loss_rate:
@@ -281,33 +306,28 @@ class CompensationCalculationEngine:
                     legal_basis="",
                     notes=""
                 )
-            
             loss_rate = Decimal(str(self.disability_loss_rate[grade])) / 100
             loss_period = income_info.loss_period_years
-            
             # ライプニッツ係数
             if loss_period in self.leibniz_coefficients:
                 leibniz = Decimal(str(self.leibniz_coefficients[loss_period]))
             else:
                 # 近似計算
                 leibniz = Decimal(str((1 - (1.03 ** -loss_period)) / 0.03))
-            
             # 逸失利益計算
             amount = base_income * loss_rate * leibniz
             amount = amount.quantize(Decimal('1'), rounding=ROUND_HALF_UP)
-            
-            details = f"""
-基礎収入: {base_income:,}円/年
-労働能力喪失率: {float(loss_rate)*100:.0f}%（第{grade}級）
-労働能力喪失期間: {loss_period}年
-ライプニッツ係数: {leibniz}
-計算式: {base_income:,}円 × {float(loss_rate)*100:.0f}% × {leibniz}
-"""
-            
+            # 計算詳細の説明を改善
+            details = (
+                f"基礎収入: {base_income:,}円/年\n"
+                f"労働能力喪失率: {float(loss_rate)*100:.0f}%（第{grade}級）\n"
+                f"労働能力喪失期間: {loss_period}年\n"
+                f"ライプニッツ係数: {leibniz}\n"
+                f"計算式: {base_income:,}円 × {float(loss_rate)*100:.0f}% × {leibniz} = {amount:,}円"
+            )
             notes = ""
             if person_info.occupation == "家事従事者":
                 notes = "家事従事者については全年齢平均の女性労働者の平均賃金を使用"
-            
             return CalculationResult(
                 item_name="後遺障害逸失利益",
                 amount=amount,

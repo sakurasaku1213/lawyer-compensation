@@ -3,38 +3,65 @@
 """
 Excel・帳票出力エンジン
 プロフェッショナルな書類作成機能
+
+改善点:
+- 設定システムとの統合
+- エラーハンドリングの強化
+- パフォーマンス最適化
+- テンプレート機能の充実
+- データ検証の強化
 """
 
 import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
-from openpyxl.chart import BarChart, Reference
+from openpyxl.chart import BarChart, Reference, LineChart, PieChart
 from openpyxl.drawing.image import Image
 from datetime import datetime, date
 from decimal import Decimal
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 import os
+import logging
+import json
 from pathlib import Path
+from dataclasses import asdict
 
 from models.case_data import CaseData
 from calculation.compensation_engine import CalculationResult
+from config.app_config import get_config_manager
 
 class ExcelReportGenerator:
-    """Excel帳票生成クラス"""
+    """Excel帳票生成クラス - 統合設定システム対応版"""
     
     def __init__(self):
+        self.config_manager = get_config_manager()
+        self.config = self.config_manager.config
+        self.logger = logging.getLogger(__name__)
+        
+        # テンプレートディレクトリの設定
+        self.template_dir = Path(self.config.ui.export_path) / "templates"
+        self.template_dir.mkdir(parents=True, exist_ok=True)
+        
         self.setup_styles()
+        self.setup_templates()
+        
+        self.logger.info("Excel帳票生成システムを初期化しました")
     
     def setup_styles(self):
-        """Excelスタイルの設定"""
+        """Excelスタイルの設定 - カスタマイズ可能"""
+        # 設定からフォント情報を取得
+        default_font = self.config.ui.font_family
+        
         # フォント
         self.fonts = {
-            'title': Font(name='Meiryo UI', size=16, bold=True),
-            'subtitle': Font(name='Meiryo UI', size=14, bold=True),
-            'header': Font(name='Meiryo UI', size=12, bold=True),
-            'body': Font(name='Meiryo UI', size=11),
-            'small': Font(name='Meiryo UI', size=10),
-            'number': Font(name='Meiryo UI', size=11, bold=True)
+            'title': Font(name=default_font, size=16, bold=True, color='1F4E79'),
+            'subtitle': Font(name=default_font, size=14, bold=True, color='2E75B6'),
+            'header': Font(name=default_font, size=12, bold=True, color='FFFFFF'),
+            'body': Font(name=default_font, size=11),
+            'small': Font(name=default_font, size=10, color='666666'),
+            'number': Font(name=default_font, size=11, bold=True),
+            'money': Font(name=default_font, size=12, bold=True, color='C55A5A'),
+            'important': Font(name=default_font, size=11, bold=True, color='E74C3C')
         }
         
         # 罫線

@@ -1,0 +1,44 @@
+{
+  "version": "1.0.0",
+  "app_name": "弁護士基準損害賠償計算システム",
+  "last_updated": "2024-01-01T00:00:00",
+  "database": {
+    "db_path": "compensation_cases.db",
+    "backup_enabled": true,
+    "backup_interval_hours": 24,
+    "backup_retention_days": 30,
+    "auto_optimize": true,
+    "connection_timeout": 30.0
+  },
+  "ui": {
+    "theme": "light",
+    "language": "ja",
+    "window_width": 1200,
+    "window_height": 800,
+    "font_size": 10,
+    "enable_tooltips": true,
+    "auto_save_interval": 300
+  },
+  "calculation": {
+    "default_standard": "弁護士基準",
+    "enable_auto_calculation": true,
+    "precision_digits": 0,
+    "rounding_method": "round",
+    "validation_enabled": true
+  },
+  "logging": {
+    "level": "INFO",
+    "file_enabled": true,
+    "file_path": "logs/app.log",
+    "max_file_size": 10485760,
+    "backup_count": 5,
+    "console_enabled": true
+  },
+  "security": {
+    "enable_data_encryption": false,
+    "backup_encryption": false,
+    "session_timeout": 3600,
+    "max_login_attempts": 3
+  },
+  "custom_settings": {}
+}
