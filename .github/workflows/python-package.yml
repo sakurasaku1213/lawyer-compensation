@@ -36,5 +36,10 @@ jobs:
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
+      env:
+        # Example of setting an environment variable for tests from a GitHub secret.
+        # The application's SecurityConfig will pick up COMP_SYS_MASTER_KEY from the environment.
+        # You would need to create a secret named CI_MASTER_KEY in your GitHub repository settings.
+        COMP_SYS_MASTER_KEY: ${{ secrets.CI_MASTER_KEY }}
       run: |
         pytest

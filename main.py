@@ -12,6 +12,17 @@
 - UIアプリケーションの起動
 """
 
+# At the beginning of main.py (conceptual, if file exists)
+
+# import sys # Example, depends on main.py structure
+# import os # Example
+# from dotenv import load_dotenv # Add this import
+
+# # Load environment variables from .env file if it exists
+# # This should be one of the first things the application does.
+# load_dotenv() 
+
+# ... rest of main.py ...
 import sys
 import os
 import logging

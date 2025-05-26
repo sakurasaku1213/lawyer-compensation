@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Optional, Dict, List, Any
 import json
-from decimal import Decimal
+from decimal import Decimal # Ensure Decimal is imported
 
 @dataclass
 class PersonInfo:
@@ -147,6 +147,35 @@ class IncomeInfo:
         )
 
 @dataclass
+class InterestCalculationInput:
+    """Inputs for legal interest calculation"""
+    principal_amount: Decimal = field(default_factory=lambda: Decimal('0'))
+    interest_start_date: Optional[date] = None
+    interest_end_date: Optional[date] = None
+    description: str = "法定利息"  # Default description for the interest item
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'principal_amount': str(self.principal_amount),
+            'interest_start_date': self.interest_start_date.isoformat() if self.interest_start_date else None,
+            'interest_end_date': self.interest_end_date.isoformat() if self.interest_end_date else None,
+            'description': self.description
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'InterestCalculationInput':
+        # Ensure correct parsing for dates that might be None
+        start_date_str = data.get('interest_start_date')
+        end_date_str = data.get('interest_end_date')
+        
+        return cls(
+            principal_amount=Decimal(data.get('principal_amount', '0')),
+            interest_start_date=date.fromisoformat(start_date_str) if start_date_str else None,
+            interest_end_date=date.fromisoformat(end_date_str) if end_date_str else None,
+            description=data.get('description', "法定利息")
+        )
+
+@dataclass
 class CaseData:
     """包括的な案件データ"""
     case_number: str = ""
@@ -156,7 +185,8 @@ class CaseData:
     person_info: PersonInfo = field(default_factory=PersonInfo)
     accident_info: AccidentInfo = field(default_factory=AccidentInfo)
     medical_info: MedicalInfo = field(default_factory=MedicalInfo)
-    income_info: IncomeInfo = field(default_factory=IncomeInfo)
+    income_info: IncomeInfo = field(default_factory=IncomeInfo) # Keep existing field order for clarity
+    interest_input: Optional[InterestCalculationInput] = field(default=None) # Add new field here
     notes: str = ""
     custom_fields: Dict[str, Any] = field(default_factory=dict)
     calculation_results: Dict[str, Any] = field(default_factory=dict)
@@ -171,6 +201,7 @@ class CaseData:
             'accident_info': self.accident_info.to_dict(),
             'medical_info': self.medical_info.to_dict(),
             'income_info': self.income_info.to_dict(),
+            'interest_input': self.interest_input.to_dict() if self.interest_input else None, # Add to_dict logic
             'notes': self.notes,
             'custom_fields': self.custom_fields,
             'calculation_results': self.calculation_results
@@ -178,6 +209,10 @@ class CaseData:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'CaseData':
+        # Ensure interest_input is correctly parsed if present
+        interest_input_data = data.get('interest_input')
+        interest_input_obj = InterestCalculationInput.from_dict(interest_input_data) if interest_input_data else None
+        
         return cls(
             case_number=data.get('case_number', ''),
             created_date=datetime.fromisoformat(data.get('created_date', datetime.now().isoformat())),
@@ -187,6 +222,7 @@ class CaseData:
             accident_info=AccidentInfo.from_dict(data.get('accident_info', {})),
             medical_info=MedicalInfo.from_dict(data.get('medical_info', {})),
             income_info=IncomeInfo.from_dict(data.get('income_info', {})),
+            interest_input=interest_input_obj, # Add from_dict logic
             notes=data.get('notes', ''),
             custom_fields=data.get('custom_fields', {}),
             calculation_results=data.get('calculation_results', {})

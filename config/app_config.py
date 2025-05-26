@@ -184,12 +184,14 @@ class SecurityConfig:
     encryption_enabled: bool = False  # テスト互換性のため
     backup_encryption: bool = False
     session_timeout: int = 3600  # 秒
-    max_login_attempts: int = 3
-    data_retention_days: int = 365  # セキュリティマネージャー互換性のため
+    # data_retention_days & audit_logging_enabled are for security_manager compatibility
+    data_retention_days: int = 365 
     anonymization_threshold_days: int = 730
-    audit_logging_enabled: bool = True  # セキュリティマネージャー互換性のため
-    # 設定ファイルから読み込まれる追加の属性
-    master_key_env_var: str = "COMP_SYS_MASTER_KEY"
+    audit_logging_enabled: bool = True 
+    
+    master_key_env_var: str = "COMP_SYS_MASTER_KEY" # Name of the env var
+    _master_key_bytes: Optional[bytes] = field(default=None, init=False, repr=False) # To cache the key
+
     secure_db_path: str = "database/secure_storage.db"
     audit_log_file: str = "logs/security_audit.log"
     password_policy: Dict[str, Any] = field(default_factory=lambda: {
@@ -200,8 +202,56 @@ class SecurityConfig:
         "require_special_char": True
     })
     session_timeout_minutes: int = 30
-    max_login_attempts: int = 5
+    max_login_attempts: int = 5 # This was duplicated, ensure it's defined once. Kept this one.
     lockout_duration_minutes: int = 15
+
+    def get_master_key(self) -> Optional[bytes]:
+        """
+        Retrieves the master encryption key from the environment variable.
+        The key is expected to be a hex-encoded string in the environment variable.
+        Caches the key in bytes format after first successful retrieval.
+        Returns None if the environment variable is not set or key is invalid,
+        and logs an error/warning.
+        """
+        if self._master_key_bytes is not None:
+            return self._master_key_bytes
+
+        key_env_var_name = self.master_key_env_var
+        hex_key = os.getenv(key_env_var_name)
+
+        if not hex_key:
+            if self.enable_data_encryption or self.backup_encryption:
+                # Only critical if encryption is supposed to be active
+                logging.critical(
+                    f"Master encryption key environment variable '{key_env_var_name}' is not set, "
+                    f"but encryption is enabled in config."
+                )
+            # else:
+                # logging.info(f"Master encryption key environment variable '{key_env_var_name}' is not set. " 
+                #              f"Continuing without master key as encryption is not enabled.")
+            return None
+
+        try:
+            key_bytes = bytes.fromhex(hex_key)
+            if len(key_bytes) != 32: # AES-256 key must be 32 bytes
+                logging.error(
+                    f"Master key from '{key_env_var_name}' is not 32 bytes long after hex decoding. "
+                    f"Key length: {len(key_bytes)} bytes."
+                )
+                if self.enable_data_encryption or self.backup_encryption:
+                     raise ConfigurationError(f"Invalid master key length in {key_env_var_name}.")
+                return None
+            self._master_key_bytes = key_bytes
+            # logging.info(f"Successfully loaded master key from '{key_env_var_name}'.")
+            return self._master_key_bytes
+        except ValueError as e:
+            logging.error(
+                f"Failed to decode master key from '{key_env_var_name}'. "
+                f"Ensure it is a valid hex string. Error: {e}"
+            )
+            if self.enable_data_encryption or self.backup_encryption:
+                raise ConfigurationError(f"Invalid hex value for master key in {key_env_var_name}.")
+            return None
 
 # 新規追加: エラーハンドリング設定
 class ErrorSeverity(Enum):
