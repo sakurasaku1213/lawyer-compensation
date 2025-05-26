@@ -6,14 +6,15 @@ SQLiteデータベース管理システム
 """
 
 import sqlite3
-import json
 import logging
-from datetime import datetime, date
-from typing import List, Optional, Dict, Any, Tuple
-from pathlib import Path
+import json
 import shutil
-from contextlib import contextmanager
+from datetime import datetime, timedelta, date
+from pathlib import Path
+from typing import Any, List, Dict, Optional, Tuple, Union, Callable
 
+from utils.error_handler import get_error_handler, DatabaseError, ErrorSeverity
+from config.app_config import ConfigManager
 from models.case_data import CaseData
 
 # ロギング設定
@@ -26,130 +27,245 @@ logging.basicConfig(
 class DatabaseManager:
     """SQLiteデータベース管理クラス"""
     
-    def __init__(self, db_path: str = "compensation_cases.db"):
+    def __init__(self, db_path: Union[str, Path], config_manager: Optional[ConfigManager] = None, logger: Optional[logging.Logger] = None):
         self.db_path = Path(db_path)
-        self.logger = logging.getLogger(__name__)
-        self.init_database()
+        self.logger = logger or logging.getLogger(__name__)
+        self._error_handler = get_error_handler() # 追加
+        self.config_manager = config_manager if config_manager else ConfigManager() # 設定マネージャーを初期化
+
+        db_config = self.config_manager.get_config().database
+        self.journal_mode = db_config.journal_mode
+        self.enable_foreign_keys = db_config.enable_foreign_keys
+        self.connection_timeout = db_config.connection_timeout_seconds
+        self.backup_dir = Path(db_config.backup_dir)
+        self.max_backup_files = db_config.max_backup_files
+
+        if not self.db_path.parent.exists():
+            try:
+                self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                err = DatabaseError(f"データベースディレクトリの作成に失敗しました: {self.db_path.parent}", severity=ErrorSeverity.CRITICAL, context={"path": str(self.db_path.parent)})
+                self._error_handler.handle_exception(e, context=err.context)
+                raise err from e # 再送してアプリケーションの起動を妨げる
+        
+        self._create_connection() # 初期接続試行
+        self._initialize_db() # 初期化
     
-    def init_database(self) -> None:
-        """データベースとテーブルの初期化"""
+    def _create_connection(self) -> sqlite3.Connection:
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # 案件テーブル
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS cases (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        case_number TEXT UNIQUE NOT NULL,
-                        created_date TEXT NOT NULL,
-                        last_modified TEXT NOT NULL,
-                        status TEXT NOT NULL DEFAULT '作成中',
-                        person_info TEXT NOT NULL,
-                        accident_info TEXT NOT NULL,
-                        medical_info TEXT NOT NULL,
-                        income_info TEXT NOT NULL,
-                        notes TEXT,
-                        custom_fields TEXT,
-                        calculation_results TEXT,
-                        is_archived BOOLEAN DEFAULT 0
-                    )
-                ''')
-                
-                # 計算履歴テーブル
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS calculation_history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        case_id INTEGER NOT NULL,
-                        calculation_date TEXT NOT NULL,
-                        calculation_type TEXT NOT NULL,
-                        input_parameters TEXT NOT NULL,
-                        results TEXT NOT NULL,
-                        FOREIGN KEY (case_id) REFERENCES cases (id)
-                    )
-                ''')
-                
-                # バックアップ記録テーブル
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS backup_records (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        backup_date TEXT NOT NULL,
-                        backup_file_path TEXT NOT NULL,
-                        backup_type TEXT NOT NULL,
-                        file_size INTEGER,
-                        notes TEXT
-                    )
-                ''')
-                
-                # 設定テーブル
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS settings (
-                        key TEXT PRIMARY KEY,
-                        value TEXT NOT NULL,
-                        last_updated TEXT NOT NULL
-                    )
-                ''')
-                
-                # テンプレートテーブル
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS case_templates (
-                        template_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        name TEXT NOT NULL UNIQUE,
-                        data_json TEXT NOT NULL,
-                        created_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL
-                    )
-                ''')
-                  # インデックス作成
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_case_number ON cases(case_number)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_status ON cases(status)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_created_date ON cases(created_date)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_last_modified ON cases(last_modified)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_calculation_case_id ON calculation_history(case_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_calculation_date ON calculation_history(calculation_date)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_template_name ON case_templates(name)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_backup_date ON backup_records(backup_date)')
-                
-                conn.commit()
-                self.logger.info(f"データベースを初期化しました: {self.db_path}")
-                
-                # データベースの最適化
-                cursor.execute('PRAGMA optimize')
-                self.logger.debug("データベースの最適化を実行しました")
-                
-        except Exception as e:
-            self.logger.error(f"データベース初期化エラー: {e}")
-            raise
-      @contextmanager
+            conn = sqlite3.connect(self.db_path, timeout=self.connection_timeout, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            if self.journal_mode:
+                conn.execute(f"PRAGMA journal_mode={self.journal_mode};")
+            if self.enable_foreign_keys:
+                conn.execute("PRAGMA foreign_keys = ON;")
+            self.logger.info(f"データベースに接続しました: {self.db_path}")
+            return conn
+        except sqlite3.Error as e:
+            db_err = DatabaseError(
+                message=f"データベース接続エラー: {self.db_path}",
+                user_message="データベースへの接続に失敗しました。ファイルパスや権限を確認してください。",
+                severity=ErrorSeverity.CRITICAL,
+                context={"db_path": str(self.db_path), "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=db_err.context)
+            raise db_err from e
+
+    def _close_connection(self, conn: Optional[sqlite3.Connection]):
+        if conn:
+            conn.close()
+            self.logger.info(f"データベース接続を閉じました: {self.db_path}")
+
     def get_connection(self):
-        """データベース接続のコンテキストマネージャー"""
+        """データベース接続をコンテキストマネージャーとして取得"""
+        return self._create_connection()
+
+    def execute_query(self, query: str, params: Optional[Union[Dict[str, Any], Tuple[Any, ...]]] = None, commit: bool = False, fetch_one: bool = False, fetch_all: bool = False) -> Any:
         conn = None
         try:
-            conn = sqlite3.connect(
-                self.db_path,
-                timeout=30.0,  # タイムアウトを30秒に設定
-                check_same_thread=False  # マルチスレッド対応
+            conn = self._create_connection()
+            cursor = conn.cursor()
+            self.logger.debug(f"Executing query: {query} with params: {params}")
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+
+            if commit:
+                conn.commit()
+                self.logger.info(f"Query committed: {query[:50]}...")
+                return cursor.lastrowid
+            
+            if fetch_one:
+                return cursor.fetchone()
+            if fetch_all:
+                return cursor.fetchall()
+            return cursor # DDLなどの場合
+        except sqlite3.IntegrityError as e:
+            db_err = DatabaseError(
+                message=f"データベース整合性エラー: {e}", 
+                user_message="データの一貫性に問題が発生しました。入力内容を確認してください。",
+                severity=ErrorSeverity.MEDIUM,
+                context={"query": query, "params": params, "original_error": str(e)}
             )
-            conn.row_factory = sqlite3.Row  # 辞書形式でアクセス可能
-            # WALモードを有効化（読み書き性能向上）
-            conn.execute('PRAGMA journal_mode=WAL')
-            # 外部キー制約を有効化
-            conn.execute('PRAGMA foreign_keys=ON')
-            yield conn
+            self._error_handler.handle_exception(e, context=db_err.context)
+            if conn: conn.rollback()
+            raise db_err from e
         except sqlite3.OperationalError as e:
-            if conn:
-                conn.rollback()
-            self.logger.error(f"データベース操作エラー: {e}")
-            raise
-        except Exception as e:
-            if conn:
-                conn.rollback()
-            self.logger.error(f"データベース接続エラー: {e}")
-            raise
+            db_err = DatabaseError(
+                message=f"データベース操作エラー: {e}", 
+                user_message="データベース操作中に問題が発生しました。スキーマや権限を確認してください。",
+                severity=ErrorSeverity.HIGH,
+                context={"query": query, "params": params, "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=db_err.context)
+            if conn: conn.rollback()
+            raise db_err from e
+        except sqlite3.Error as e: # その他のsqlite3エラー
+            db_err = DatabaseError(
+                message=f"データベース一般エラー: {e}", 
+                user_message="データベース処理中に予期せぬエラーが発生しました。",
+                severity=ErrorSeverity.HIGH,
+                context={"query": query, "params": params, "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=db_err.context)
+            if conn: conn.rollback()
+            raise db_err from e
+        except Exception as e: # 予期せぬその他のエラー
+            unknown_err = DatabaseError(
+                message=f"予期せぬデータベース関連エラー: {e}",
+                user_message="データベース処理中に不明なエラーが発生しました。システム管理者にお問い合わせください。",
+                severity=ErrorSeverity.CRITICAL,
+                context={"query": query, "params": params, "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=unknown_err.context)
+            if conn: conn.rollback()
+            raise unknown_err from e
         finally:
-            if conn:
-                conn.close()
-      def save_case(self, case_data: CaseData) -> bool:
+            self._close_connection(conn)
+
+    def execute_script(self, script: str) -> None:
+        conn = None
+        try:
+            conn = self._create_connection()
+            cursor = conn.cursor()
+            self.logger.info("Executing script...")
+            cursor.executescript(script)
+            conn.commit()
+            self.logger.info("Script executed and committed successfully.")
+        except sqlite3.Error as e:
+            db_err = DatabaseError(
+                message=f"データベーススクリプト実行エラー: {e}",
+                user_message="データベース初期化またはマイグレーションスクリプトの実行に失敗しました。",
+                severity=ErrorSeverity.CRITICAL,
+                context={"script_snippet": script[:200], "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=db_err.context)
+            if conn: conn.rollback()
+            raise db_err from e
+        finally:
+            self._close_connection(conn)
+
+    def _initialize_db(self):
+        """データベースの初期化（テーブル作成など）"""
+        try:
+            # 案件テーブル
+            create_cases_table = """
+            CREATE TABLE IF NOT EXISTS cases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_number TEXT UNIQUE NOT NULL,
+                case_name TEXT,
+                created_date TEXT,
+                last_modified TEXT,
+                status TEXT DEFAULT '作成中',
+                client_name TEXT,
+                client_data TEXT,
+                accident_data TEXT,
+                medical_data TEXT,
+                income_data TEXT,
+                calculation_results TEXT,
+                custom_fields TEXT DEFAULT '{}',
+                archived BOOLEAN DEFAULT 0
+            );
+            """
+            
+            # 計算履歴テーブル
+            create_history_table = """
+            CREATE TABLE IF NOT EXISTS calculation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id INTEGER,
+                calculation_date TEXT,
+                calculation_type TEXT,
+                input_data TEXT,
+                results TEXT,
+                notes TEXT,
+                FOREIGN KEY (case_id) REFERENCES cases (id)
+            );
+            """
+            
+            # バックアップ記録テーブル
+            create_backup_table = """
+            CREATE TABLE IF NOT EXISTS backup_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                backup_date TEXT,
+                backup_path TEXT,
+                file_size INTEGER,
+                success BOOLEAN
+            );
+            """
+            
+            # 設定テーブル
+            create_settings_table = """
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                last_modified TEXT
+            );
+            """
+            
+            # テンプレートテーブル
+            create_templates_table = """
+            CREATE TABLE IF NOT EXISTS case_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_name TEXT UNIQUE NOT NULL,
+                template_data TEXT,
+                created_date TEXT,
+                last_modified TEXT,
+                description TEXT
+            );
+            """
+            
+            # テーブルを作成
+            self.execute_query(create_cases_table)
+            self.execute_query(create_history_table)
+            self.execute_query(create_backup_table)
+            self.execute_query(create_settings_table)
+            self.execute_query(create_templates_table)
+            
+            # インデックス作成
+            self.execute_query("CREATE INDEX IF NOT EXISTS idx_cases_case_number ON cases (case_number);")
+            self.execute_query("CREATE INDEX IF NOT EXISTS idx_cases_client_name ON cases (client_name);")
+            self.execute_query("CREATE INDEX IF NOT EXISTS idx_cases_status ON cases (status);")
+            self.execute_query("CREATE INDEX IF NOT EXISTS idx_history_case_id ON calculation_history (case_id);")
+            self.execute_query("CREATE INDEX IF NOT EXISTS idx_templates_name ON case_templates (template_name);")
+            
+            self.logger.info("データベースの初期化が完了しました")
+        except DatabaseError as e: # execute_query/script から送出されるエラー
+            # 初期化時のエラーは致命的である可能性が高い
+            self.logger.critical(f"データベース初期化に失敗: {e.message}")
+            # _error_handler.handle_exception は execute_query/script 内で呼ばれているのでここでは不要
+            raise # アプリケーションの起動を止めるために再送
+        except Exception as e: # 万が一 DatabaseError 以外が来た場合
+            db_err = DatabaseError(
+                message=f"データベース初期化中に予期せぬエラー: {e}",
+                user_message="データベースのセットアップ中に重大なエラーが発生しました。",
+                severity=ErrorSeverity.CRITICAL,
+                context={"original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=db_err.context)
+            raise db_err from e
+
+    def save_case(self, case_data: CaseData) -> bool:
         """案件データを保存（新規作成・更新両対応）"""
         if not case_data or not case_data.case_number:
             self.logger.error("無効な案件データです: case_numberが空です")
@@ -236,7 +352,8 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"案件保存エラー: {e}")
             return False
-      def load_case(self, case_number: str) -> Optional[CaseData]:
+
+    def load_case(self, case_number: str) -> Optional[CaseData]:
         """案件番号で案件データを読み込み"""
         if not case_number or not case_number.strip():
             self.logger.error("案件番号が空です")
@@ -609,7 +726,8 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"テンプレート削除エラー: {template_id} - {e}")
             return False
-      def get_template_by_name(self, name: str) -> Optional[CaseData]:
+
+    def get_template_by_name(self, name: str) -> Optional[CaseData]:
         """テンプレート名でテンプレートを検索"""
         try:
             with self.get_connection() as conn:

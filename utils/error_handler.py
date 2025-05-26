@@ -15,7 +15,7 @@ import logging
 import traceback
 import sys
 from datetime import datetime
-from typing import Dict, Any, Optional, Callable, Type, Union
+from typing import Dict, Any, Optional, Callable, Type, Union, List
 from enum import Enum
 from dataclasses import dataclass, field
 import json
@@ -115,6 +115,28 @@ class ConfigurationError(CompensationSystemError):
             severity=ErrorSeverity.HIGH,
             **kwargs
         )
+
+class SecurityError(CompensationSystemError):
+    """セキュリティエラー"""
+    def __init__(self, message: str, **kwargs):
+        super().__init__(
+            message,
+            category=ErrorCategory.SECURITY,
+            severity=ErrorSeverity.HIGH,
+            **kwargs
+        )
+
+class FileIOError(CompensationSystemError):
+    """ファイルI/Oエラー"""
+    def __init__(self, message: str, file_path: Optional[str] = None, **kwargs):
+        super().__init__(
+            message,
+            category=ErrorCategory.FILE_IO,
+            severity=ErrorSeverity.MEDIUM,
+            **kwargs
+        )
+        if file_path:
+            self.context["file_path"] = file_path
 
 class ErrorHandler:
     """統一エラーハンドリングシステム"""

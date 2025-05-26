@@ -1,7 +1,6 @@
 # 弁護士基準損害賠償計算システム - 依存関係
 # Core UI Framework
 customtkinter>=5.2.0
-tkinter
 
 # Data Processing & Calculation
 pandas>=2.0.0
@@ -12,9 +11,6 @@ xlsxwriter>=3.1.0
 # PDF Generation
 reportlab>=4.0.0
 pypdf>=3.0.0
-
-# Database
-sqlite3
 
 # Configuration & Validation
 pydantic>=2.0.0
@@ -52,10 +48,6 @@ jsonschema>=4.19.0
 
 # Cryptography (for data protection)
 cryptography>=41.0.0
-
-# Threading & Async
-asyncio
-threading
 
 # System Integration
 psutil>=5.9.0

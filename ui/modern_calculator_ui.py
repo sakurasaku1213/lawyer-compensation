@@ -25,7 +25,7 @@ import json
 from pathlib import Path
 
 from models.case_data import CaseData, PersonInfo, AccidentInfo, MedicalInfo, IncomeInfo
-from calculation.compensation_engine import CompensationCalculationEngine, CalculationResult
+from calculation.compensation_engine import CompensationEngine, CalculationResult
 from database.db_manager import DatabaseManager
 from config.app_config import ConfigManager, get_config_manager
 
@@ -39,7 +39,7 @@ class ModernCompensationCalculator:
     def __init__(self):
         # 設定管理システムの初期化
         self.config_manager = get_config_manager()
-        self.config = self.config_manager.config
+        self.config = self.config_manager.get_config()
         
         # ロギング設定
         logging.basicConfig(
@@ -49,22 +49,23 @@ class ModernCompensationCalculator:
         )
         self.logger = logging.getLogger(__name__)
         self.logger.info("現代的損害賠償計算システムを開始")
-        
-        # UI初期化
+          # UI初期化
         self.root = ctk.CTk()
         self.setup_window()
         self.init_components()
-        self.create_modern_ui()
         
-        # コンポーネント初期化
+        # コンポーネント初期化（UIコンポーネントが使用する前に初期化）
         try:
-            self.calculation_engine = CompensationCalculationEngine()
+            self.calculation_engine = CompensationEngine()
             self.db_manager = DatabaseManager(self.config.database.file_path)
             self.current_case: CaseData = CaseData()
             
             # リアルタイム計算フラグ
             self.auto_calculate = ctk.BooleanVar(value=self.config.ui.auto_calculate)
             self.calculation_timer = None
+            
+            # UIコンポーネントの作成（すべての属性が初期化された後）
+            self.create_modern_ui()
             
             self.logger.info("すべてのコンポーネントが正常に初期化されました")
         except Exception as e:
@@ -219,14 +220,12 @@ class ModernCompensationCalculator:
             font=self.fonts['subtitle']
         )
         sidebar_title.pack(pady=15)
-        
-        # 検索フィールド
+          # 検索フィールド
         search_frame = ctk.CTkFrame(self.sidebar)
         search_frame.pack(fill="x", padx=15, pady=10)
         
         self.search_entry = ctk.CTkEntry(
             search_frame,
-            placeholder_text="案件番号・依頼者名で検索...",
             font=self.fonts['body']
         )
         self.search_entry.pack(fill="x", padx=10, pady=10)
@@ -437,8 +436,7 @@ class ModernCompensationCalculator:
         self.disability_details_text = ctk.CTkTextbox(
             disability_section,
             height=100,
-            font=self.fonts['body'],
-            placeholder_text="後遺障害の内容、部位、労働能力への影響などを具体的に記載..."
+            font=self.fonts['body']
         )
         self.disability_details_text.pack(fill="x", padx=15, pady=(0,10))
         self.disability_details_text.bind("<KeyRelease>", self.schedule_calculation)
@@ -650,7 +648,6 @@ class ModernCompensationCalculator:
         
         entry = ctk.CTkEntry(
             field_frame,
-            placeholder_text=placeholder,
             font=self.fonts['body']
         )
         entry.pack(fill="x", padx=10, pady=(0, 10))
@@ -1415,8 +1412,7 @@ class ModernCompensationCalculator:
                         self.current_case.last_modified = datetime.now()
                         self.current_case.status = "作成中"
                         self.current_case.calculation_results = {}
-                        
-                        # UIに反映
+                          # UIに反映
                         self.load_case_data_to_ui()
                         self.status_label.configure(text="テンプレートを適用しました")
                         messagebox.showinfo("成功", "テンプレートが適用されました。\n案件番号を設定して保存してください。")
@@ -1424,8 +1420,78 @@ class ModernCompensationCalculator:
                     messagebox.showerror("エラー", "テンプレートの読み込みに失敗しました。")
                     
         except Exception as e:
-                messagebox.showerror("エラー", f"テンプレート '{template_name}' の保存に失敗しました。\n同名のテンプレートが既に存在する可能性があります。")
+            self.logger.error(f"テンプレート適用エラー: {e}", exc_info=True)
+            messagebox.showerror("エラー", f"テンプレート適用中にエラーが発生しました: {str(e)}")
+
+    def save_as_template(self):
+        """テンプレートとして保存機能"""
+        try:
+            # テンプレート名入力ダイアログ
+            template_name_window = ctk.CTkToplevel(self.root)
+            template_name_window.title("テンプレート保存")
+            template_name_window.geometry("400x200")
+            template_name_window.transient(self.root)
+            template_name_window.grab_set()
+            
+            template_name = None
+            
+            def on_save():
+                nonlocal template_name
+                name = name_entry.get().strip()
+                if name:
+                    template_name = name
+                    template_name_window.destroy()
+                else:
+                    messagebox.showwarning("入力エラー", "テンプレート名を入力してください。")
+            
+            def on_cancel():
+                template_name_window.destroy()
+            
+            # ウィジェット配置
+            ctk.CTkLabel(template_name_window, text="テンプレート名を入力してください:", 
+                        font=self.fonts['body']).pack(pady=20)
+            
+            name_entry = ctk.CTkEntry(template_name_window, width=300, font=self.fonts['body'])
+            name_entry.pack(pady=10)
+            name_entry.focus()
+            
+            # ボタンフレーム
+            button_frame = ctk.CTkFrame(template_name_window)
+            button_frame.pack(fill="x", padx=20, pady=20)
+            
+            ctk.CTkButton(button_frame, text="保存", command=on_save, 
+                         width=100).pack(side="left", padx=10)
+            ctk.CTkButton(button_frame, text="キャンセル", command=on_cancel, 
+                         width=100).pack(side="right", padx=10)
+            
+            # Enterキーでも保存
+            name_entry.bind("<Return>", lambda event: on_save())
+            
+            # ダイアログの完了を待つ
+            self.root.wait_window(template_name_window)
+            
+            if template_name:
+                # 現在の案件データからテンプレート用データを作成
+                template_data = CaseData()
+                template_data.person_info = self.current_case.person_info
+                template_data.accident_info = self.current_case.accident_info
+                template_data.medical_info = self.current_case.medical_info
+                template_data.income_info = self.current_case.income_info
                 
+                # テンプレート固有の情報をクリア
+                template_data.id = None
+                template_data.case_number = ""
+                template_data.status = "テンプレート"
+                template_data.calculation_results = {}
+                
+                # データベースに保存
+                success = self.db_manager.save_template(template_name, template_data)
+                if success:
+                    self.status_label.configure(text=f"テンプレート '{template_name}' を保存しました")
+                    messagebox.showinfo("成功", f"テンプレート '{template_name}' が保存されました。")
+                else:
+                    messagebox.showerror("エラー", f"テンプレート '{template_name}' の保存に失敗しました。\n同名のテンプレートが既に存在する可能性があります。")
+                    
         except Exception as e:
             self.logger.error(f"テンプレート保存エラー: {e}", exc_info=True)
             messagebox.showerror("エラー", f"テンプレート保存中にエラーが発生しました: {str(e)}")
@@ -1675,8 +1741,16 @@ class ModernCompensationCalculator:
     def open_settings(self):
         messagebox.showinfo("機能開発中", "設定画面は現在開発中です。より便利になる予定です！")
 
-    # ... (run) ...
+    def run(self):
+        """アプリケーションのメインループを開始"""
+        try:
+            self.logger.info("GUI アプリケーションを開始します...")
+            self.root.mainloop()
+            self.logger.info("GUI アプリケーションが正常に終了しました")
+        except Exception as e:
+            self.logger.error(f"GUI アプリケーション実行中にエラーが発生しました: {e}", exc_info=True)
+            raise
 
 if __name__ == "__main__":
     app = ModernCompensationCalculator()
-    app.root.mainloop()
+    app.run()

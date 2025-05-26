@@ -11,7 +11,8 @@ from typing import Dict, Any, Optional, Tuple, List
 import logging
 from dataclasses import dataclass
 
-from models.case_data import CaseData, PersonInfo, AccidentInfo, MedicalInfo, IncomeInfo
+from models.case_data import CaseData, PersonInfo, AccidentInfo, MedicalInfo, IncomeInfo # 修正
+from utils.error_handler import get_error_handler, CalculationError, ErrorSeverity # 追加
 
 @dataclass
 class CalculationResult:
@@ -31,11 +32,12 @@ class CalculationResult:
             'notes': self.notes
         }
 
-class CompensationCalculationEngine:
+class CompensationEngine:
     """弁護士基準損害賠償計算エンジン"""
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+        self._error_handler = get_error_handler() # 追加
         self.init_standards()
     
     def init_standards(self):
@@ -125,7 +127,14 @@ class CompensationCalculationEngine:
                 # 小数点以下3桁で四捨五入（一般的なライプニッツ係数の表示に合わせる）
                 return leibniz.quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)
             except Exception as e:
-                self.logger.error(f"ライプニッツ係数の近似計算エラー (期間: {period}): {e}")
+                calc_err = CalculationError(
+                    message=f"ライプニッツ係数の近似計算エラー (期間: {period}): {e}",
+                    user_message="ライプニッツ係数の計算中にエラーが発生しました。入力期間を確認してください。",
+                    severity=ErrorSeverity.MEDIUM,
+                    context={"period": period, "original_error": str(e)}
+                )
+                self._error_handler.handle_exception(e, context=calc_err.context)
+                # Noneを返すか、エラーを再送するかは設計次第。ここではNoneを返す。
                 return None
 
     def calculate_hospitalization_compensation(self, medical_info: MedicalInfo) -> CalculationResult:
@@ -173,8 +182,29 @@ class CompensationCalculationEngine:
                 notes="実通院日数が少ない場合は減額調整を行っています"
             )
             
+        except KeyError as e: # テーブル参照エラー
+            calc_err = CalculationError(
+                message=f"入通院慰謝料表の参照エラー: {e}",
+                user_message="入通院慰謝料の計算に必要なデータが見つかりませんでした。期間の入力が正しいか確認してください。",
+                severity=ErrorSeverity.HIGH,
+                context={"medical_info": medical_info.to_dict() if hasattr(medical_info, 'to_dict') else str(medical_info), "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
+            return CalculationResult(
+                item_name="入通院慰謝料",
+                amount=Decimal('0'),
+                calculation_details=f"計算エラー: {calc_err.user_message}",
+                legal_basis="",
+                notes="計算できませんでした"
+            )
         except Exception as e:
-            self.logger.error(f"入通院慰謝料計算エラー: {e}")
+            calc_err = CalculationError(
+                message=f"入通院慰謝料計算エラー: {e}",
+                user_message="入通院慰謝料の計算中に予期せぬエラーが発生しました。",
+                severity=ErrorSeverity.HIGH,
+                context={"medical_info": medical_info.to_dict() if hasattr(medical_info, 'to_dict') else str(medical_info), "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
             return CalculationResult(
                 item_name="入通院慰謝料",
                 amount=Decimal('0'),
@@ -221,8 +251,29 @@ class CompensationCalculationEngine:
                     notes="等級を確認してください"
                 )
                 
+        except KeyError as e: # 等級テーブル参照エラー
+            calc_err = CalculationError(
+                message=f"後遺障害慰謝料テーブルの参照エラー (等級: {medical_info.disability_grade}): {e}",
+                user_message=f"後遺障害等級 第{medical_info.disability_grade}級 に対応する慰謝料データが見つかりませんでした。",
+                severity=ErrorSeverity.MEDIUM,
+                context={"medical_info": medical_info.to_dict() if hasattr(medical_info, 'to_dict') else str(medical_info), "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
+            return CalculationResult(
+                item_name="後遺障害慰謝料",
+                amount=Decimal('0'),
+                calculation_details=f"計算エラー: {calc_err.user_message}",
+                legal_basis="",
+                notes="等級を確認してください"
+            )
         except Exception as e:
-            self.logger.error(f"後遺障害慰謝料計算エラー: {e}")
+            calc_err = CalculationError(
+                message=f"後遺障害慰謝料計算エラー: {e}",
+                user_message="後遺障害慰謝料の計算中に予期せぬエラーが発生しました。",
+                severity=ErrorSeverity.HIGH,
+                context={"medical_info": medical_info.to_dict() if hasattr(medical_info, 'to_dict') else str(medical_info), "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
             return CalculationResult(
                 item_name="後遺障害慰謝料",
                 amount=Decimal('0'),
@@ -261,8 +312,29 @@ class CompensationCalculationEngine:
                 notes="事故前3ヶ月の実収入を基に算定"
             )
             
+        except TypeError as e: # daily_income や lost_work_days が不正な型の場合
+            calc_err = CalculationError(
+                message=f"休業損害計算時の型エラー: {e}",
+                user_message="休業損害の計算に必要な数値データ（日額収入、休業日数）の形式が正しくありません。",
+                severity=ErrorSeverity.MEDIUM,
+                context={"income_info": income_info.to_dict() if hasattr(income_info, 'to_dict') else str(income_info), "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
+            return CalculationResult(
+                item_name="休業損害",
+                amount=Decimal('0'),
+                calculation_details=f"計算エラー: {calc_err.user_message}",
+                legal_basis="",
+                notes="計算できませんでした"
+            )
         except Exception as e:
-            self.logger.error(f"休業損害計算エラー: {e}")
+            calc_err = CalculationError(
+                message=f"休業損害計算エラー: {e}",
+                user_message="休業損害の計算中に予期せぬエラーが発生しました。",
+                severity=ErrorSeverity.HIGH,
+                context={"income_info": income_info.to_dict() if hasattr(income_info, 'to_dict') else str(income_info), "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
             return CalculationResult(
                 item_name="休業損害",
                 amount=Decimal('0'),
@@ -290,12 +362,6 @@ class CompensationCalculationEngine:
                 # UI・モデル・エンジン間で basic_annual_income に統一
                 base_income = income_info.basic_annual_income or person_info.annual_income
             
-基礎収入: {base_income:,}円/年
-労働能力喪失率: {float(loss_rate)*100:.0f}%（第{grade}級）
-労働能力喪失期間: {loss_period}年
-ライプニッツ係数: {leibniz}
-計算式: {base_income:,}円 × {float(loss_rate)*100:.0f}% × {leibniz}
-"""
             # 労働能力喪失率
             grade = medical_info.disability_grade
             if grade not in self.disability_loss_rate:
@@ -309,22 +375,21 @@ class CompensationCalculationEngine:
             loss_rate = Decimal(str(self.disability_loss_rate[grade])) / 100
             loss_period = income_info.loss_period_years
             # ライプニッツ係数
-            if loss_period in self.leibniz_coefficients:
-                leibniz = Decimal(str(self.leibniz_coefficients[loss_period]))
-            else:
-                # 近似計算
-                leibniz = Decimal(str((1 - (1.03 ** -loss_period)) / 0.03))
+            leibniz = self.get_leibniz_coefficient(loss_period) # 修正: メソッド呼び出しに変更
+            if leibniz is None: # get_leibniz_coefficient が None を返す可能性に対処
+                raise CalculationError("ライプニッツ係数の取得に失敗しました。", user_message="計算に必要な係数を取得できませんでした。")
+
             # 逸失利益計算
             amount = base_income * loss_rate * leibniz
             amount = amount.quantize(Decimal('1'), rounding=ROUND_HALF_UP)
-            # 計算詳細の説明を改善
-            details = (
-                f"基礎収入: {base_income:,}円/年\n"
-                f"労働能力喪失率: {float(loss_rate)*100:.0f}%（第{grade}級）\n"
-                f"労働能力喪失期間: {loss_period}年\n"
-                f"ライプニッツ係数: {leibniz}\n"
-                f"計算式: {base_income:,}円 × {float(loss_rate)*100:.0f}% × {leibniz} = {amount:,}円"
-            )
+            
+            # 計算詳細の説明を修正 (f-string を使用)
+            details = f"""基礎収入: {base_income:,.0f}円/年
+労働能力喪失率: {loss_rate*100:.0f}%（第{grade}級）
+労働能力喪失期間: {loss_period}年
+ライプニッツ係数: {leibniz}
+計算式: {base_income:,.0f}円 × {loss_rate*100:.0f}% × {leibniz} = {amount:,.0f}円"""
+            
             notes = ""
             if person_info.occupation == "家事従事者":
                 notes = "家事従事者については全年齢平均の女性労働者の平均賃金を使用"
@@ -336,8 +401,59 @@ class CompensationCalculationEngine:
                 notes=notes
             )
             
+        except KeyError as e: # 労働能力喪失率やライプニッツ係数の参照エラー
+            calc_err = CalculationError(
+                message=f"逸失利益計算のためのデータ参照エラー: {e}",
+                user_message="逸失利益の計算に必要なデータ（労働能力喪失率、ライプニッツ係数など）が見つかりませんでした。",
+                severity=ErrorSeverity.HIGH,
+                context={
+                    "person_info": person_info.to_dict() if hasattr(person_info, 'to_dict') else str(person_info),
+                    "medical_info": medical_info.to_dict() if hasattr(medical_info, 'to_dict') else str(medical_info),
+                    "income_info": income_info.to_dict() if hasattr(income_info, 'to_dict') else str(income_info),
+                    "original_error": str(e)
+                }
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
+            return CalculationResult(
+                item_name="後遺障害逸失利益",
+                amount=Decimal('0'),
+                calculation_details=f"計算エラー: {calc_err.user_message}",
+                legal_basis="",
+                notes="計算できませんでした"
+            )
+        except TypeError as e: # 数値計算時の型エラー
+            calc_err = CalculationError(
+                message=f"逸失利益計算時の型エラー: {e}",
+                user_message="逸失利益の計算に必要な数値データの形式が正しくありません。",
+                severity=ErrorSeverity.HIGH,
+                context={
+                    "person_info": person_info.to_dict() if hasattr(person_info, 'to_dict') else str(person_info),
+                    "medical_info": medical_info.to_dict() if hasattr(medical_info, 'to_dict') else str(medical_info),
+                    "income_info": income_info.to_dict() if hasattr(income_info, 'to_dict') else str(income_info),
+                    "original_error": str(e)
+                }
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
+            return CalculationResult(
+                item_name="後遺障害逸失利益",
+                amount=Decimal('0'),
+                calculation_details=f"計算エラー: {calc_err.user_message}",
+                legal_basis="",
+                notes="計算できませんでした"
+            )
         except Exception as e:
-            self.logger.error(f"後遺障害逸失利益計算エラー: {e}")
+            calc_err = CalculationError(
+                message=f"後遺障害逸失利益計算エラー: {e}",
+                user_message="後遺障害逸失利益の計算中に予期せぬエラーが発生しました。",
+                severity=ErrorSeverity.HIGH,
+                context={
+                    "person_info": person_info.to_dict() if hasattr(person_info, 'to_dict') else str(person_info),
+                    "medical_info": medical_info.to_dict() if hasattr(medical_info, 'to_dict') else str(medical_info),
+                    "income_info": income_info.to_dict() if hasattr(income_info, 'to_dict') else str(income_info),
+                    "original_error": str(e)
+                }
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
             return CalculationResult(
                 item_name="後遺障害逸失利益",
                 amount=Decimal('0'),
@@ -349,13 +465,17 @@ class CompensationCalculationEngine:
     def calculate_medical_expenses(self, medical_info: MedicalInfo) -> CalculationResult:
         """治療費・医療関係費の計算"""
         try:
-            total_amount = medical_info.medical_expenses + medical_info.transportation_costs + medical_info.nursing_costs
+            if not all(isinstance(val, (int, float, Decimal)) for val in 
+                       [medical_info.medical_expenses, medical_info.transportation_costs, medical_info.nursing_costs]):
+                raise TypeError("医療費関連の数値が無効です。")
+
+            total_amount = Decimal(str(medical_info.medical_expenses)) + \
+                           Decimal(str(medical_info.transportation_costs)) + \
+                           Decimal(str(medical_info.nursing_costs))
             
-            details = f"""
-治療費: {medical_info.medical_expenses:,}円
-交通費: {medical_info.transportation_costs:,}円
-看護費: {medical_info.nursing_costs:,}円
-"""
+            details = f"""治療費: {medical_info.medical_expenses:,.0f}円
+交通費: {medical_info.transportation_costs:,.0f}円
+看護費: {medical_info.nursing_costs:,.0f}円"""
             
             return CalculationResult(
                 item_name="治療費・医療関係費",
@@ -365,8 +485,29 @@ class CompensationCalculationEngine:
                 notes="実際に支出した費用"
             )
             
+        except TypeError as e: # 数値加算時の型エラー
+            calc_err = CalculationError(
+                message=f"医療費計算時の型エラー: {e}",
+                user_message="治療費・医療関係費の計算に必要な数値データの形式が正しくありません。",
+                severity=ErrorSeverity.MEDIUM,
+                context={"medical_info": medical_info.to_dict() if hasattr(medical_info, 'to_dict') else str(medical_info), "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
+            return CalculationResult(
+                item_name="治療費・医療関係費",
+                amount=Decimal('0'),
+                calculation_details=f"計算エラー: {calc_err.user_message}",
+                legal_basis="",
+                notes="計算できませんでした"
+            )
         except Exception as e:
-            self.logger.error(f"医療費計算エラー: {e}")
+            calc_err = CalculationError(
+                message=f"医療費計算エラー: {e}",
+                user_message="治療費・医療関係費の計算中に予期せぬエラーが発生しました。",
+                severity=ErrorSeverity.HIGH,
+                context={"medical_info": medical_info.to_dict() if hasattr(medical_info, 'to_dict') else str(medical_info), "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
             return CalculationResult(
                 item_name="治療費・医療関係費",
                 amount=Decimal('0'),
@@ -378,47 +519,79 @@ class CompensationCalculationEngine:
     def calculate_all(self, case_data: CaseData) -> Dict[str, CalculationResult]:
         """全損害項目の計算"""
         results = {}
-        
-        # 各項目の計算
-        results['hospitalization'] = self.calculate_hospitalization_compensation(case_data.medical_info)
-        results['disability'] = self.calculate_disability_compensation(case_data.medical_info)
-        results['lost_income'] = self.calculate_lost_income(case_data.income_info)
-        results['future_income_loss'] = self.calculate_future_income_loss(
-            case_data.person_info, case_data.medical_info, case_data.income_info
-        )
-        results['medical_expenses'] = self.calculate_medical_expenses(case_data.medical_info)
-        
-        # 合計額の計算
-        total_before_deduction = sum(result.amount for result in results.values())
-        
-        # 過失相殺
-        fault_ratio = Decimal(str(case_data.person_info.fault_percentage)) / 100
-        total_after_fault = total_before_deduction * (Decimal('1') - fault_ratio)
-        total_after_fault = total_after_fault.quantize(Decimal('1'), rounding=ROUND_HALF_UP)
-        
-        # 弁護士費用の概算
-        lawyer_fee = self._estimate_lawyer_fee(total_after_fault)
-        
-        # 最終支払見込額
-        final_amount = total_after_fault + lawyer_fee
-        
-        # 合計情報
-        results['summary'] = CalculationResult(
-            item_name="総合計",
-            amount=final_amount,
-            calculation_details=f"""
+        try:
+            # 各項目の計算
+            results['hospitalization'] = self.calculate_hospitalization_compensation(case_data.medical_info)
+            results['disability'] = self.calculate_disability_compensation(case_data.medical_info)
+            results['lost_income'] = self.calculate_lost_income(case_data.income_info)
+            results['future_income_loss'] = self.calculate_future_income_loss(
+                case_data.person_info, case_data.medical_info, case_data.income_info
+            )
+            results['medical_expenses'] = self.calculate_medical_expenses(case_data.medical_info)
+            
+            # 合計額の計算
+            total_before_deduction = sum(result.amount for result in results.values() if result and isinstance(result.amount, Decimal))
+            
+            # 過失相殺
+            fault_percentage = case_data.person_info.fault_percentage
+            if not isinstance(fault_percentage, (int, float, Decimal)):
+                 raise TypeError(f"過失割合は数値である必要がありますが、{type(fault_percentage)} を受け取りました。")
+            fault_ratio = Decimal(str(fault_percentage)) / 100
+            total_after_fault = total_before_deduction * (Decimal('1') - fault_ratio)
+            total_after_fault = total_after_fault.quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+            
+            # 弁護士費用の概算
+            lawyer_fee = self._estimate_lawyer_fee(total_after_fault)
+            
+            # 最終支払見込額
+            final_amount = total_after_fault + lawyer_fee
+            
+            # 合計情報
+            results['summary'] = CalculationResult(
+                item_name="総合計",
+                amount=final_amount,
+                calculation_details=f"""
 損害合計（過失相殺前）: {total_before_deduction:,}円
 被害者過失割合: {case_data.person_info.fault_percentage}%
 損害合計（過失相殺後）: {total_after_fault:,}円
 弁護士費用（概算）: {lawyer_fee:,}円
 最終支払見込額: {final_amount:,}円
 """.strip(),
-            legal_basis="民法第709条、第722条",
-            notes="弁護士費用は概算です。実際の費用は事務所の基準により異なります"
-        )
-        
-        return results
-    
+                legal_basis="民法第709条、第722条",
+                notes="弁護士費用は概算です。実際の費用は事務所の基準により異なります"
+            )
+            return results
+
+        except CalculationError as e: # 既に処理済みの CalculationError
+            self.logger.error(f"計算処理中にエラーが再送されました: {e.message}")
+            # 必要に応じて、ここでさらに上位の処理を行うか、そのまま再送
+            # ここでは、エラーが発生した項目以外の結果も返すため、エラー情報をsummaryに含める
+            error_summary = f"計算エラー: {e.user_message} (詳細はログを確認してください)"
+            if 'summary' not in results or not results['summary']:
+                 results['summary'] = CalculationResult("総合計", Decimal('0'), error_summary, notes="一部計算に失敗しました")
+            else:
+                 results['summary'].notes += f"; {error_summary}"
+                 results['summary'].amount = Decimal('0') # エラー時は合計0とするか、計算できた分だけにするか
+            return results # 計算できた範囲で返す
+
+        except Exception as e:
+            calc_err = CalculationError(
+                message=f"全体の損害額計算中に予期せぬエラー: {e}",
+                user_message="損害賠償額全体の計算中に予期せぬエラーが発生しました。",
+                severity=ErrorSeverity.CRITICAL,
+                context={"case_data_summary": str(case_data)[:200], "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
+            # 全体計算エラー時は、空の結果またはエラー情報を含む結果を返す
+            return {
+                'summary': CalculationResult(
+                    item_name="総合計", 
+                    amount=Decimal('0'), 
+                    calculation_details=f"計算エラー: {calc_err.user_message}",
+                    notes="計算全体に失敗しました。"
+                )
+            }
+
     def _estimate_lawyer_fee(self, economic_benefit: Decimal) -> Decimal:
         """弁護士費用の概算（旧報酬基準参考）"""
         try:
@@ -436,6 +609,21 @@ class CompensationCalculationEngine:
             estimated_fee = economic_benefit * fee_rate
             return max(estimated_fee, min_fee).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
             
+        except TypeError as e: # economic_benefit が Decimal でない場合など
+            calc_err = CalculationError(
+                message=f"弁護士費用計算時の型エラー: {e}",
+                user_message="弁護士費用の計算に必要な経済的利益の数値形式が正しくありません。",
+                severity=ErrorSeverity.MEDIUM,
+                context={"economic_benefit": str(economic_benefit), "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
+            return Decimal('0')
         except Exception as e:
-            self.logger.error(f"弁護士費用計算エラー: {e}")
+            calc_err = CalculationError(
+                message=f"弁護士費用計算エラー: {e}",
+                user_message="弁護士費用の概算計算中に予期せぬエラーが発生しました。",
+                severity=ErrorSeverity.MEDIUM,
+                context={"economic_benefit": str(economic_benefit), "original_error": str(e)}
+            )
+            self._error_handler.handle_exception(e, context=calc_err.context)
             return Decimal('0')

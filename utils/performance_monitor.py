@@ -160,6 +160,25 @@ class PerformanceMonitor:
             self.alerts.append(alert)
             self.logger.warning(f"アラート: {alert['message']}")
     
+    def start_timing(self, operation_name: str):
+        """タイミング計測を開始"""
+        # コンテキストマネージャーを使用する代わりに、シンプルなタイミング開始メソッドを提供
+        if not hasattr(self, '_timing_data'):
+            self._timing_data = {}
+        self._timing_data[operation_name] = time.time()
+        
+    def end_timing(self, operation_name: str) -> float:
+        """タイミング計測を終了し、経過時間を返す"""
+        if not hasattr(self, '_timing_data') or operation_name not in self._timing_data:
+            return 0.0
+        elapsed = time.time() - self._timing_data[operation_name]
+        del self._timing_data[operation_name]
+        return elapsed
+        
+    def get_memory_usage(self) -> int:
+        """現在のメモリ使用量を取得（バイト単位）"""
+        return psutil.virtual_memory().used
+    
     @contextmanager
     def measure_performance(self, function_name: str, parameters: Optional[Dict[str, Any]] = None):
         """パフォーマンス計測のコンテキストマネージャー"""
