@@ -1,0 +1,207 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+streamlit_test_env/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Project specific
+logs/
+temp/
+exports/
+*.db
+*.sqlite
+*.sqlite3
+
+# Streamlit
+streamlit_temp/
+
+# Office files
+*.docx
+*.pptx
+*.xlsx
+~$*
+
+# Test files
+test_*.py
+*_test.py
+demo_*.py
+
+# Cache
+.mdcache/
+.mdcache_gui/
+
+# System files
+System Volume Information/
+AnyMP4 Temp/
+Windows Burn Temp Files/
+Autorun.inf
+Icon1.ico
+
+# Build artifacts
+*.exe
+*.msi
+build_*.py
+BangogoPlus.spec
+
+# Sensitive data
+*.ini
+*_config.json
+bangogo_*
+
+# Temporary files
+*.tmp
+*.temp
+新しいテキスト*
+無題のファイル*
+
+# Scanner data
+スキャンデータ/
+過去問解説/
+学会/
+基本書/
+合格答案再現集/
+司法修習/
+実務で使う/
+短答/
+賭博/
+読書/
+福岡賭博/
+法学入門系/
+要件事実/
