@@ -420,7 +420,8 @@ class SystemIntegrationTests(unittest.TestCase):
         
         # 複数ケースデータ作成
         test_cases = []
-        for i in range(5):            case_data = CaseData(
+        for i in range(5):
+            case_data = CaseData(
                 case_number=f"BATCH-TEST-{i+1:03d}",
                 person_info=PersonInfo(
                     name=f"テスト太郎{i+1}",
