@@ -38,6 +38,11 @@ class SystemIntegrationTests(unittest.TestCase):
         # ログ設定
         logging.basicConfig(level=logging.INFO)
         cls.logger = logging.getLogger(__name__)
+
+        # Store original encryption key if present and set a test key when absent
+        cls._original_enc_key = os.environ.get('COMPENSATION_SYSTEM_ENCRYPTION_KEY')
+        if cls._original_enc_key is None:
+            os.environ['COMPENSATION_SYSTEM_ENCRYPTION_KEY'] = 'test_encryption_key'
         
         # 一時ディレクトリ作成
         cls.temp_dir = tempfile.mkdtemp()
@@ -600,6 +605,12 @@ class SystemIntegrationTests(unittest.TestCase):
         
         # 一時ディレクトリの削除（コメントアウトして結果を確認可能）
         # shutil.rmtree(cls.temp_dir)
+
+        # Restore original encryption key environment variable
+        if hasattr(cls, '_original_enc_key') and cls._original_enc_key is not None:
+            os.environ['COMPENSATION_SYSTEM_ENCRYPTION_KEY'] = cls._original_enc_key
+        else:
+            os.environ.pop('COMPENSATION_SYSTEM_ENCRYPTION_KEY', None)
 
 
 if __name__ == '__main__':
