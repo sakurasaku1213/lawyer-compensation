@@ -381,15 +381,20 @@ class PdfReportGenerator:
 
 # 使用例 (テスト用)
 if __name__ == '__main__':
-    from config.app_config import load_config
-    from decimal import Decimal
+from pathlib import Path
+from config.app_config import load_config
+from decimal import Decimal
 
     # テスト用の設定とデータ
     try:
         # 設定ファイルのロード (実際のパスに置き換えてください)
         # このテストを実行する際は、プロジェクトルートからの相対パス、または絶対パスを指定してください。
-        # 例: config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'app_config.json')
-        config_path = 'e:\\config\\app_config.json' # 直接指定
+        # 例: config_path = os.path.join(Path(__file__).resolve().parents[1], 'config', 'app_config.json')
+        # 環境変数 APP_CONFIG_PATH を指定するとこの値で上書きできます
+        config_path = os.getenv(
+            'APP_CONFIG_PATH',
+            os.path.join(Path(__file__).resolve().parents[1], 'config', 'app_config.json')
+        )
         if not os.path.exists(config_path):
             print(f"テスト用の設定ファイルが見つかりません: {config_path}")
             exit()
