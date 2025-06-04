@@ -420,7 +420,8 @@ class SystemIntegrationTests(unittest.TestCase):
         
         # 複数ケースデータ作成
         test_cases = []
-        for i in range(5):            case_data = CaseData(
+        for i in range(5):
+            case_data = CaseData(
                 case_number=f"BATCH-TEST-{i+1:03d}",
                 person_info=PersonInfo(
                     name=f"テスト太郎{i+1}",
@@ -436,7 +437,8 @@ class SystemIntegrationTests(unittest.TestCase):
                     injury_type="頸椎捻挫",
                     treatment_period_days=120 + i * 30,
                     hospitalization_days=i * 2,
-                    disability_grade=14,                    medical_expenses=Decimal(str(100000 + i * 25000))
+                    disability_grade=14,
+                    medical_expenses=Decimal(str(100000 + i * 25000))
                 ),
                 income_info=IncomeInfo(
                     transportation_expenses=Decimal(str(20000 + i * 5000)),
