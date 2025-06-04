@@ -151,6 +151,11 @@ lawyer-compensation-calculator/
     └── test_functionality.py
 ```
 
+### Configuration file path
+Utilities in `reports/` read settings from `config/app_config.json` by default.
+Set the environment variable `APP_CONFIG_PATH` to point to another JSON file if you
+need to override this location.
+
 ## 開発
 
 ### 開発環境のセットアップ
